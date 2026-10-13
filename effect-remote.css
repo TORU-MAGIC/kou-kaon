@@ -99,6 +99,20 @@ input[type="range"] {
   display: none !important;
 }
 
+.remote-key-capture {
+  position: fixed;
+  z-index: -1;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  min-height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .effect-header,
 .effect-main {
   width: min(1180px, 100%);
@@ -282,20 +296,6 @@ input[type="range"] {
   font-size: 11px;
 }
 
-.iphone-help .offline-status {
-  grid-column: 2;
-  color: #f6c96b;
-  font-weight: 900;
-}
-
-.iphone-help .offline-status[data-state="ready"] {
-  color: #92e8a8;
-}
-
-.iphone-help .offline-status[data-state="error"] {
-  color: #ff9393;
-}
-
 .key-learning-banner {
   position: sticky;
   top: 98px;
@@ -328,6 +328,32 @@ input[type="range"] {
   margin-top: 16px;
 }
 
+.effect-slot-manager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 18px;
+  padding: 14px;
+  border: 1px solid rgba(39, 199, 201, 0.3);
+  border-radius: 12px;
+  background: rgba(23, 27, 33, 0.96);
+}
+
+.effect-slot-manager button {
+  min-width: min(320px, 76vw);
+  min-height: 52px;
+  background: linear-gradient(180deg, #2ad2d4, var(--cyan-2));
+  color: #061012;
+  font-weight: 900;
+}
+
+.effect-slot-manager span {
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
 .effect-slot-card {
   min-width: 0;
   padding: 15px;
@@ -358,6 +384,21 @@ input[type="range"] {
 .effect-slot-header h2 {
   margin: 0;
   font-size: 17px;
+}
+
+.effect-slot-header-tools {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.remove-slot-button {
+  min-height: 34px;
+  padding: 0 10px;
+  border-color: rgba(240, 90, 90, 0.45);
+  background: rgba(240, 90, 90, 0.08);
+  color: #ffb0b0;
+  font-size: 12px;
 }
 
 .slot-status {
@@ -659,16 +700,25 @@ noscript {
     font-size: 16px;
   }
 
+  .effect-slot-manager {
+    align-items: stretch;
+    flex-direction: column;
+    text-align: center;
+  }
+
+  .effect-slot-manager button {
+    width: 100%;
+    min-width: 0;
+    min-height: 60px;
+    font-size: 16px;
+  }
+
   .iphone-help {
     grid-template-columns: 1fr;
   }
 
   .iphone-help strong {
     grid-row: auto;
-  }
-
-  .iphone-help .offline-status {
-    grid-column: auto;
   }
 
   .effect-slot-fields {

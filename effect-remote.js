@@ -30,6 +30,7 @@
     { id: "applause", name: "拍手", file: "./sound-effects/sfx_applause.wav" },
   ];
   const DEFAULT_SLOT_EFFECT_IDS = ["correct", "wrong", "sparkle", "whoosh", "vanish", "tada"];
+  const DEFAULT_SLOT_COUNT = DEFAULT_SLOT_EFFECT_IDS.length;
 
   const dom = {
     audioReadyStatus: document.getElementById("audioReadyStatus"),
@@ -41,9 +42,12 @@
     keyLearningSlot: document.getElementById("keyLearningSlot"),
     cancelKeyLearning: document.getElementById("cancelKeyLearning"),
     effectSlotGrid: document.getElementById("effectSlotGrid"),
+    addEffectSlotButton: document.getElementById("addEffectSlotButton"),
+    effectSlotCount: document.getElementById("effectSlotCount"),
     audioGate: document.getElementById("audioGate"),
     audioGateHelp: document.getElementById("audioGateHelp"),
     enableAudioButton: document.getElementById("enableAudioButton"),
+    remoteKeyCapture: document.getElementById("remoteKeyCapture"),
     effectToast: document.getElementById("effectToast"),
   };
 
@@ -58,20 +62,26 @@
     builtinErrors: new Map(),
     learningIndex: null,
     learningTimer: null,
+    remoteCaptureEnabled: false,
     keyLastPlayedAt: new Map(),
     toastTimer: null,
     saveTimer: null,
     slots: [],
   };
 
-  function createDefaultSlot(index, sourceId) {
+  function defaultSlotSourceId(index) {
+    return DEFAULT_SLOT_EFFECT_IDS[index]
+      || BUILTIN_EFFECTS[index % BUILTIN_EFFECTS.length].id;
+  }
+
+  function createDefaultSlot(index, sourceId = defaultSlotSourceId(index)) {
     const builtin = builtinById(sourceId) || BUILTIN_EFFECTS[0];
     return {
       index,
       sourceId: builtin.id,
       name: builtin.name,
       volume: 100,
-      key: index === 0 ? "VolumeUp" : index === 1 ? "VolumeDown" : "",
+      key: "",
       fileName: builtin.file.split("/").pop(),
       buffer: null,
       gainNode: null,
@@ -99,16 +109,26 @@
   }
 
   function loadSettings() {
-    const defaults = DEFAULT_SLOT_EFFECT_IDS.map((sourceId, index) => createDefaultSlot(index, sourceId));
     let savedSlots = [];
+    let savedVersion = 0;
 
     try {
       const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
-      if (parsed && Array.isArray(parsed.slots)) savedSlots = parsed.slots;
+      if (parsed && Array.isArray(parsed.slots)) {
+        savedSlots = parsed.slots;
+        savedVersion = Number(parsed.version) || 0;
+      }
     } catch (error) {
       console.warn("効果音設定を読み込めませんでした。", error);
     }
 
+    const slotCount = savedVersion >= 2
+      ? Math.max(1, savedSlots.length)
+      : Math.max(DEFAULT_SLOT_COUNT, savedSlots.length);
+    const defaults = Array.from(
+      { length: slotCount },
+      (_, index) => createDefaultSlot(index)
+    );
     state.slots = defaults.map((slot, index) => {
       const saved = savedSlots[index];
       if (!saved || typeof saved !== "object") return slot;
@@ -150,14 +170,16 @@
       const message = `保存済みキーが効果音${duplicate.index + 1}と重複したため解除しました。`;
       slot.warning = slot.warning ? `${slot.warning} ${message}` : message;
     });
-    if (duplicateSettingsRemoved) saveSettings();
+    if (duplicateSettingsRemoved || savedVersion < 2 || savedSlots.length !== slotCount) {
+      saveSettings();
+    }
   }
 
   function saveSettings() {
     window.clearTimeout(state.saveTimer);
     state.saveTimer = null;
     const value = {
-      version: 1,
+      version: 2,
       slots: state.slots.map((slot) => ({
         sourceId: slot.sourceId,
         name: slot.name,
@@ -223,7 +245,10 @@
         return `<article class="effect-slot-card${isLearning ? " is-learning" : ""}" data-slot-index="${slot.index}" data-play-count="${slot.playCount}">
           <header class="effect-slot-header">
             <h2>効果音${slot.index + 1}</h2>
-            <span class="slot-status ${status.className}">${status.text}</span>
+            <div class="effect-slot-header-tools">
+              <span class="slot-status ${status.className}">${status.text}</span>
+              <button class="remove-slot-button" type="button" aria-label="効果音${slot.index + 1}を削除"${state.slots.length > 1 ? "" : " disabled"}>削除</button>
+            </div>
           </header>
 
           <div class="effect-slot-fields">
@@ -264,6 +289,7 @@
       })
       .join("");
 
+    dom.effectSlotCount.textContent = `${state.slots.length}個`;
     updateLearningBanner();
     updateStopAllButton();
   }
@@ -527,6 +553,7 @@
       });
 
       state.audioEnabled = context.state === "running";
+      activateMediaSession();
       renderSlots();
       updateOverallStatus();
       dom.audioGate.hidden = true;
@@ -703,15 +730,17 @@
       const bytes = await file.arrayBuffer();
       const buffer = await decodeAudioData(context, bytes);
       if (slot.loadToken !== token) return;
+      const currentIndex = state.slots.indexOf(slot);
+      if (currentIndex < 0) return;
 
-      stopSlot(index);
+      stopSlot(currentIndex);
       slot.sourceId = "custom";
       slot.buffer = buffer;
       slot.fileName = file.name;
       slot.loadStatus = "ready";
       slot.warning = "";
-      if (!slot.name || slot.name === `効果音${index + 1}` || builtinById(previous.sourceId)?.name === slot.name) {
-        slot.name = file.name.replace(/\.[^.]+$/, "") || `効果音${index + 1}`;
+      if (!slot.name || slot.name === `効果音${currentIndex + 1}` || builtinById(previous.sourceId)?.name === slot.name) {
+        slot.name = file.name.replace(/\.[^.]+$/, "") || `効果音${currentIndex + 1}`;
       }
       state.audioEnabled = context.state === "running";
       saveSettings();
@@ -744,13 +773,15 @@
     try {
       const buffer = await ensureBuiltinDecoded(sourceId);
       if (slot.loadToken !== token) return;
-      stopSlot(index);
+      const currentIndex = state.slots.indexOf(slot);
+      if (currentIndex < 0) return;
+      stopSlot(currentIndex);
       slot.sourceId = sourceId;
       slot.buffer = buffer;
       slot.fileName = builtin.file.split("/").pop();
       slot.loadStatus = "ready";
       slot.warning = "";
-      if (!previousName || previousName === `効果音${index + 1}` || previousBuiltin?.name === previousName) {
+      if (!previousName || previousName === `効果音${currentIndex + 1}` || previousBuiltin?.name === previousName) {
         slot.name = builtin.name;
       }
       saveSettings();
@@ -766,7 +797,77 @@
     }
   }
 
+  function addEffectSlot() {
+    const index = state.slots.length;
+    const slot = createDefaultSlot(index);
+    const cachedBuffer = state.builtinBuffers.get(slot.sourceId);
+    if (cachedBuffer) {
+      slot.buffer = cachedBuffer;
+      slot.loadStatus = "ready";
+    }
+    state.slots.push(slot);
+    if (state.audioContext) {
+      ensureSlotGain(slot);
+    }
+
+    saveSettings();
+    renderSlots();
+    updateOverallStatus();
+    showToast(`効果音${index + 1}を追加しました。`);
+
+    if (!slot.buffer && state.audioContext) {
+      selectBuiltin(index, slot.sourceId);
+    }
+  }
+
+  function disconnectEffectSlot(slot) {
+    if (!slot.gainNode) return;
+    try {
+      slot.gainNode.disconnect();
+    } catch (_error) {
+      // The node may already be disconnected.
+    }
+    slot.gainNode = null;
+  }
+
+  function removeEffectSlot(index) {
+    const slot = state.slots[index];
+    if (!slot || state.slots.length <= 1) return;
+    if (!window.confirm(`効果音${index + 1}「${slot.name || "名称未設定"}」を削除しますか？`)) return;
+
+    const defaultNamedSlots = new Set(
+      state.slots.filter((item, itemIndex) => item.name === `効果音${itemIndex + 1}`)
+    );
+    slot.loadToken += 1;
+    stopSlot(index);
+    disconnectEffectSlot(slot);
+    if (slot.key) {
+      state.keyLastPlayedAt.delete(normalizeKey(slot.key));
+    }
+    state.slots.splice(index, 1);
+    state.slots.forEach((item, itemIndex) => {
+      item.index = itemIndex;
+      if (defaultNamedSlots.has(item)) {
+        item.name = `効果音${itemIndex + 1}`;
+      }
+    });
+
+    if (state.learningIndex === index) {
+      window.clearTimeout(state.learningTimer);
+      state.learningTimer = null;
+      state.learningIndex = null;
+    } else if (state.learningIndex > index) {
+      state.learningIndex -= 1;
+    }
+
+    saveSettings();
+    renderSlots();
+    updateOverallStatus();
+    showToast(`効果音${index + 1}を削除しました。`);
+  }
+
   function beginKeyLearning(index) {
+    if (!state.slots[index]) return;
     cancelKeyLearning(false);
     state.learningIndex = index;
     state.slots[index].warning = "次に押したキーを登録します（10秒で自動終了）。";
@@ -775,6 +876,17 @@
       showToast("キー登録を時間切れで終了しました。");
     }, KEY_LEARNING_TIMEOUT_MS);
     renderSlots();
+    focusRemoteKeyCapture();
+  }
+
+  function focusRemoteKeyCapture() {
+    const input = dom.remoteKeyCapture;
+    if (!input || document.activeElement === input) return;
+    try {
+      input.focus({ preventScroll: true });
+    } catch (_error) {
+      input.focus();
+    }
   }
 
   function cancelKeyLearning(showMessage = true) {
@@ -782,9 +894,10 @@
     state.learningTimer = null;
     const previousIndex = state.learningIndex;
     state.learningIndex = null;
+    if (document.activeElement === dom.remoteKeyCapture) dom.remoteKeyCapture.blur();
     if (Number.isInteger(previousIndex)) {
       const slot = state.slots[previousIndex];
-      if (slot.warning.includes("次に押したキー")) slot.warning = "";
+      if (slot && slot.warning.includes("次に押したキー")) slot.warning = "";
       renderSlots();
       if (showMessage) showToast("キー登録をキャンセルしました。");
     } else {
@@ -856,6 +969,7 @@
   function isTextEditingEvent(event) {
     const target = event.target;
     if (!(target instanceof Element)) return false;
+    if (target === dom.remoteKeyCapture) return false;
     const input = target.closest("input");
     const textControl = target.closest("textarea, [contenteditable='true']") ||
       (input && ["text", "search", "email", "url", "tel", "password", "number"].includes(input.type));
@@ -893,6 +1007,7 @@
     const slot = state.slots[index];
     slot.key = name;
     slot.warning = "";
+    state.remoteCaptureEnabled = true;
     window.clearTimeout(state.learningTimer);
     state.learningTimer = null;
     state.learningIndex = null;
@@ -904,7 +1019,7 @@
 
   function playAssignedKey(keyCandidates, repeat, displayName) {
     const slot = state.slots.find(
-      (candidate) => candidate.key && keyCandidates.some((key) => keysOverlap(candidate.key, key))
+      (candidate) => candidate.key && keyCandidates.includes(normalizeKey(candidate.key))
     );
     if (!slot) return false;
     if (repeat) return true;
@@ -968,6 +1083,16 @@
 
   function installMediaSessionHandlers() {
     if (!("mediaSession" in navigator) || typeof navigator.mediaSession.setActionHandler !== "function") return;
+    try {
+      if ("MediaMetadata" in window) {
+        navigator.mediaSession.metadata = new MediaMetadata({
+          title: "効果音リモコン",
+          artist: "Magic Effect Remote",
+        });
+      }
+    } catch (_error) {
+      // Metadata is optional; action handlers can still be installed.
+    }
     const actions = {
       play: "MediaPlayPause",
       pause: "MediaPlayPause",
@@ -984,6 +1109,16 @@
     });
   }
 
+  function activateMediaSession() {
+    installMediaSessionHandlers();
+    if (!("mediaSession" in navigator)) return;
+    try {
+      navigator.mediaSession.playbackState = "playing";
+    } catch (_error) {
+      // Some browsers expose Media Session without supporting playbackState.
+    }
+  }
+
   function slotIndexFromTarget(target) {
     const card = target.closest("[data-slot-index]");
     return card ? Number(card.dataset.slotIndex) : -1;
@@ -997,6 +1132,8 @@
 
     if (button.classList.contains("test-effect-button")) {
       startSlotBuffer(state.slots[index], "テスト");
+    } else if (button.classList.contains("remove-slot-button")) {
+      removeEffectSlot(index);
     } else if (button.classList.contains("stop-effect-button")) {
       stopSlot(index);
     } else if (button.classList.contains("learn-key-button")) {
@@ -1079,12 +1216,22 @@
   function bindEvents() {
     dom.enableAudioButton.addEventListener("click", prepareAudio);
     dom.stopAllButton.addEventListener("click", stopAll);
+    dom.addEffectSlotButton.addEventListener("click", addEffectSlot);
     dom.cancelKeyLearning.addEventListener("click", () => cancelKeyLearning());
     dom.effectSlotGrid.addEventListener("click", handleGridClick);
     dom.effectSlotGrid.addEventListener("input", handleGridInput);
     dom.effectSlotGrid.addEventListener("change", handleGridChange);
     document.addEventListener("keydown", handleKeyDown, true);
+    dom.remoteKeyCapture.addEventListener("input", () => {
+      dom.remoteKeyCapture.value = "";
+    });
     document.addEventListener("pointerdown", tryResumeAudioOutput, true);
+    document.addEventListener("pointerup", (event) => {
+      if (!state.remoteCaptureEnabled) return;
+      if (!(event.target instanceof Element)) return;
+      if (event.target.closest("input, select, textarea, [contenteditable='true']")) return;
+      window.requestAnimationFrame(focusRemoteKeyCapture);
+    });
 
     window.addEventListener("pagehide", () => {
       saveSettings();
@@ -1097,6 +1244,7 @@
 
   function initialize() {
     loadSettings();
+    state.remoteCaptureEnabled = state.slots.some((slot) => Boolean(slot.key));
     renderSlots();
     updateOverallStatus();
     bindEvents();
